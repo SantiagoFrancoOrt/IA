@@ -77,9 +77,13 @@ class QLearningAgent:
                 done = terminated or truncated
                 next_state = self.discretize(next_obs)
 
-                # Q-Learning update
-                best_next = float(np.max(self.q_table[next_state]))
-                td_error = reward + self.gamma * best_next - self.q_table[state][action_idx]
+                # Q-Learning update (sin bootstrap si el episodio terminó de verdad)
+                if terminated:
+                    target = reward
+                else:
+                    best_next = float(np.max(self.q_table[next_state]))
+                    target = reward + self.gamma * best_next
+                td_error = target - self.q_table[state][action_idx]
                 self.q_table[state][action_idx] += self.alpha * td_error
 
                 state = next_state
@@ -171,7 +175,7 @@ class DynaQAgent(QLearningAgent):
     def __init__(self, n_planning_steps=10, **kwargs):
         super().__init__(**kwargs)
         self.n_planning_steps = n_planning_steps
-        # model: (state, action_idx) -> (reward, next_state)
+        # model: (state, action_idx) -> (reward, next_state, terminated)
         self.model: dict = {}
 
     def train_agent(self, env, episodes=15000, epsilon=None, gamma=None, alpha=None):
@@ -201,22 +205,28 @@ class DynaQAgent(QLearningAgent):
                 done = terminated or truncated
                 next_state = self.discretize(next_obs)
 
-                # (a) Direct RL update from real experience
-                best_next = float(np.max(self.q_table[next_state]))
-                td_error = reward + self.gamma * best_next - self.q_table[state][action_idx]
+                # (a) Direct RL update from real experience (sin bootstrap si terminó de verdad)
+                if terminated:
+                    target = reward
+                else:
+                    best_next = float(np.max(self.q_table[next_state]))
+                    target = reward + self.gamma * best_next
+                td_error = target - self.q_table[state][action_idx]
                 self.q_table[state][action_idx] += self.alpha * td_error
 
                 # (b) Update tabular model
-                self.model[(state, action_idx)] = (reward, next_state)
+                self.model[(state, action_idx)] = (reward, next_state, terminated)
 
                 # (c) Planning: n updates from simulated experience
                 experienced = list(self.model.keys())
                 for s, a in random.sample(experienced, min(self.n_planning_steps, len(experienced))):
-                    r, ns = self.model[(s, a)]
-                    best_plan = float(np.max(self.q_table[ns]))
-                    self.q_table[s][a] += self.alpha * (
-                        r + self.gamma * best_plan - self.q_table[s][a]
-                    )
+                    r, ns, is_terminal = self.model[(s, a)]
+                    if is_terminal:
+                        plan_target = r
+                    else:
+                        best_plan = float(np.max(self.q_table[ns]))
+                        plan_target = r + self.gamma * best_plan
+                    self.q_table[s][a] += self.alpha * (plan_target - self.q_table[s][a])
 
                 state = next_state
                 total_reward += reward  # acumulamos recompensa real (sin shaping)
